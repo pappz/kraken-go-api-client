@@ -208,12 +208,16 @@ func (api *KrakenApi) Trades(pair string, since int64) (*TradesResponse, error) 
 			PriceFloat:    price,
 			Volume:        volumeString,
 			VolumeFloat:   volume,
-			Time:          int64(trade[2].(float64)),
 			Buy:           trade[3].(string) == BUY,
 			Sell:          trade[3].(string) == SELL,
 			Market:        trade[4].(string) == MARKET,
 			Limit:         trade[4].(string) == LIMIT,
 			Miscellaneous: trade[5].(string),
+		}
+
+		tradeInfo.Time, err = parseTime(trade[2].(float64))
+		if err != nil {
+			return nil, err
 		}
 
 		result.Trades = append(result.Trades, tradeInfo)

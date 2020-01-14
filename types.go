@@ -2,9 +2,12 @@ package krakenapi
 
 import (
 	"encoding/json"
+	"errors"
 	"math/big"
 	"reflect"
 	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -86,6 +89,10 @@ const (
 	SELL   = "s"
 	MARKET = "m"
 	LIMIT  = "l"
+)
+
+var (
+	errTimeParse = errors.New("failed to parse timestamp")
 )
 
 // KrakenResponse wraps the Kraken API JSON response
@@ -462,7 +469,7 @@ type TradeInfo struct {
 	PriceFloat    float64
 	Volume        string
 	VolumeFloat   float64
-	Time          int64
+	Time          time.Time
 	Buy           bool
 	Sell          bool
 	Market        bool
@@ -600,3 +607,24 @@ type CancelOrderResponse struct {
 }
 
 type QueryOrdersResponse map[string]Order
+
+func parseTime(tf float64) (time.Time, error) {
+	ts := strconv.FormatFloat(tf, 'f', 6, 64)
+	var t time.Time
+	s := strings.Split(ts, ".")
+	if len(s) != 2 {
+		return t, errTimeParse
+	}
+
+	sec, err := strconv.Atoi(s[0])
+	if err != nil {
+		return t, errTimeParse
+	}
+
+	dec, err := strconv.Atoi(s[0])
+	if err != nil {
+		return t, errTimeParse
+	}
+	t = time.Unix(int64(sec), int64(dec))
+	return t, nil
+}
