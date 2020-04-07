@@ -621,10 +621,10 @@ func parseTime(tf float64) (time.Time, error) {
 		return t, errTimeParse
 	}
 
-	dec, err := strconv.Atoi(s[0])
+	dec, err := strconv.Atoi(s[1])
 	if err != nil {
 		return t, errTimeParse
 	}
-	t = time.Unix(int64(sec), int64(dec))
+	t = time.Unix(int64(sec), int64(dec*1000))
 	return t, nil
 }
