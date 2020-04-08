@@ -87,9 +87,10 @@ const (
 
 // KrakenApi represents a Kraken API Client connection
 type KrakenApi struct {
-	key    string
-	secret string
-	client *http.Client
+	key     string
+	secret  string
+	client  *http.Client
+	limiter *rateLimiter
 }
 
 // New creates a new Kraken API client
@@ -98,7 +99,12 @@ func New(key, secret string) *KrakenApi {
 }
 
 func NewWithClient(key, secret string, httpClient *http.Client) *KrakenApi {
-	return &KrakenApi{key, secret, httpClient}
+	return &KrakenApi{
+		key,
+		secret,
+		httpClient,
+		NewPublicRateLimit(),
+	}
 }
 
 // Time returns the server's time
@@ -492,8 +498,7 @@ func (api *KrakenApi) Query(method string, data map[string]string) (interface{},
 // Execute a public method query
 func (api *KrakenApi) queryPublic(method string, values url.Values, typ interface{}) (interface{}, error) {
 	url := fmt.Sprintf("%s/%s/public/%s", APIURL, APIVersion, method)
-	resp, err := api.doRequest(url, values, nil, typ)
-
+	resp, err := api.limiter.limitedRequest(api, url, values, nil, typ)
 	return resp, err
 }
 
