@@ -1,6 +1,7 @@
 package krakenapi
 
 import (
+	"log"
 	"net/url"
 	"sync"
 	"time"
@@ -29,7 +30,7 @@ var (
 )
 
 type rule struct {
-	calls     uint
+	limit     uint
 	reduction time.Duration
 }
 
@@ -72,20 +73,24 @@ func (c *call) waitFor() (interface{}, error) {
 }
 
 type rateLimiter struct {
-	sentTime          time.Time
-	requestsInNetwork uint
-	rule              rule
-	callList          chan *call
+	requestBucket uint
+	rule          rule
+	callList      chan *call
+	mux           sync.Mutex
+	lastDecrease  time.Time
+	waitTime      time.Duration
 }
 
 func NewPublicRateLimit() *rateLimiter {
 	rl := &rateLimiter{
-		sentTime:          time.Now(),
-		requestsInNetwork: 0,
-		rule:              publicRule,
-		callList:          make(chan *call, 100),
+		requestBucket: 0,
+		rule:          publicRule,
+		callList:      make(chan *call, 100),
+		lastDecrease:  time.Now(),
+		waitTime:      publicRule.reduction + (200 * time.Millisecond),
 	}
 
+	go rl.startTimer()
 	go rl.startSender()
 	return rl
 }
@@ -97,47 +102,53 @@ func (r *rateLimiter) limitedRequest(api *KrakenApi, reqURL string, values url.V
 	return resp, err
 }
 
-func (r *rateLimiter) acquire() {
-	elapsedSeconds := uint(time.Since(r.sentTime).Seconds())
-	decrease := elapsedSeconds * r.rule.calls
-	r.requestsInNetwork -= decrease
-
-	if r.requestsInNetwork < r.rule.calls {
-		r.sentTime = time.Now()
-		r.requestsInNetwork++
-		return
-	}
-
-}
-
 func (r *rateLimiter) startSender() {
-
 	for {
 		c := <-r.callList
-
-		r.calculateFreeSlots()
-
-		if !r.channelIsFree() {
-			time.Sleep(1 * time.Second)
-		}
-
-		r.sentTime = time.Now()
-		r.requestsInNetwork++
+		r.waitForChannel()
+		r.increaseBucket()
+		log.Printf("send out request: %s", time.Now())
 		go r.doRequest(c)
 	}
 }
 
-func (r *rateLimiter) channelIsFree() bool {
-	return r.requestsInNetwork < r.rule.calls
-}
+func (r *rateLimiter) waitForChannel() {
+	if r.getBucketSize() < r.rule.limit {
+		return
+	}
 
-func (r *rateLimiter) calculateFreeSlots() {
-	elapsedSeconds := uint(time.Since(r.sentTime).Seconds())
-	decrease := elapsedSeconds * r.rule.calls
-	r.requestsInNetwork -= decrease
+	diff := r.waitTime - time.Since(r.lastDecrease)
+	log.Printf("wait :%s", diff)
+	time.Sleep(diff)
 }
 
 func (r *rateLimiter) doRequest(c *call) {
 	resp, err := c.api.doRequest(c.reqURL, c.values, c.headers, c.typ)
 	c.done(resp, err)
+}
+
+func (r *rateLimiter) startTimer() {
+	for r.lastDecrease = range time.Tick(1 * time.Second) {
+		r.decreaseBucket()
+	}
+}
+
+func (r *rateLimiter) decreaseBucket() {
+	r.mux.Lock()
+	if r.requestBucket > 0 {
+		r.requestBucket -= 1
+	}
+	r.mux.Unlock()
+}
+
+func (r *rateLimiter) increaseBucket() {
+	r.mux.Lock()
+	r.requestBucket += 1
+	r.mux.Unlock()
+}
+
+func (r *rateLimiter) getBucketSize() uint {
+	r.mux.Lock()
+	defer r.mux.Unlock()
+	return r.requestBucket
 }
