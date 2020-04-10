@@ -1,20 +1,32 @@
 package krakenapi
 
 import (
-	"fmt"
-	"net/url"
-	"strconv"
+	"log"
+	"sync"
 	"testing"
 )
 
-func TestNewPublicRateLimit(t *testing.T) {
-	rl := NewPublicRateLimit()
-	myUrl := fmt.Sprintf("%s/%s/public/%s", APIURL, APIVersion, "Trades")
-	values := url.Values{"pair": {"XXBTZEUR"}}
-	values.Set("since", strconv.FormatInt(1495777604391411290, 10))
+var (
+	wg    sync.WaitGroup
+	since = int64(1546470333801400000)
+)
 
-	_, err := rl.limitedRequest(publicAPI, myUrl, values, nil, nil)
+func sendRequest() {
+
+	_, err := publicAPI.Trades("XXBTZCAD", since)
 	if err != nil {
-		t.Fatalf("%v", err)
+		log.Printf("%v", err)
 	}
+	wg.Done()
+}
+
+func TestNewPublicRateLimit(t *testing.T) {
+
+	for i := 1; i <= 100; i++ {
+		wg.Add(1)
+		sendRequest()
+		since++
+	}
+
+	wg.Wait()
 }

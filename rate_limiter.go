@@ -1,37 +1,11 @@
 package krakenapi
 
 import (
+	"log"
 	"net/url"
 	"sync"
 	"time"
 )
-
-var (
-	publicRule = rule{
-		1,
-		1 * time.Second,
-	}
-
-	privateStarterRule = rule{
-		15,
-		3 * time.Second,
-	}
-
-	privateIntermediateRule = rule{
-		20,
-		2 * time.Second,
-	}
-
-	privateProRule = rule{
-		20,
-		1 * time.Second,
-	}
-)
-
-type rule struct {
-	calls     uint
-	reduction time.Duration
-}
 
 type call struct {
 	api     *KrakenApi
@@ -72,20 +46,15 @@ func (c *call) waitFor() (interface{}, error) {
 }
 
 type rateLimiter struct {
-	sentTime          time.Time
-	requestsInNetwork uint
-	rule              rule
-	callList          chan *call
+	sentTime  time.Time
+	callList  chan *call
+	extraWait bool
 }
 
 func NewPublicRateLimit() *rateLimiter {
 	rl := &rateLimiter{
-		sentTime:          time.Now(),
-		requestsInNetwork: 0,
-		rule:              publicRule,
-		callList:          make(chan *call, 100),
+		callList: make(chan *call, 100),
 	}
-
 	go rl.startSender()
 	return rl
 }
@@ -97,47 +66,51 @@ func (r *rateLimiter) limitedRequest(api *KrakenApi, reqURL string, values url.V
 	return resp, err
 }
 
-func (r *rateLimiter) acquire() {
-	elapsedSeconds := uint(time.Since(r.sentTime).Seconds())
-	decrease := elapsedSeconds * r.rule.calls
-	r.requestsInNetwork -= decrease
-
-	if r.requestsInNetwork < r.rule.calls {
-		r.sentTime = time.Now()
-		r.requestsInNetwork++
-		return
-	}
-
-}
-
 func (r *rateLimiter) startSender() {
 
-	for {
+	for i := 0; ; i++ {
 		c := <-r.callList
 
-		r.calculateFreeSlots()
-
-		if !r.channelIsFree() {
-			time.Sleep(1 * time.Second)
+		if r.extraWait {
+			time.Sleep(time.Second * 10)
+			r.extraWait = false
 		}
 
 		r.sentTime = time.Now()
-		r.requestsInNetwork++
 		go r.doRequest(c)
 	}
 }
 
 func (r *rateLimiter) channelIsFree() bool {
-	return r.requestsInNetwork < r.rule.calls
+	if r.extraWait {
+
+		return false
+
+	}
+	return time.Since(r.sentTime) > time.Second
 }
 
-func (r *rateLimiter) calculateFreeSlots() {
-	elapsedSeconds := uint(time.Since(r.sentTime).Seconds())
-	decrease := elapsedSeconds * r.rule.calls
-	r.requestsInNetwork -= decrease
+func (r *rateLimiter) waitForChannel() {
+	diff := time.Second - time.Since(r.sentTime)
+	if r.extraWait {
+		diff = time.Second * 5
+		defer r.cleanExtraWait()
+	} else {
+		diff = time.Millisecond * 0
+	}
+
+	log.Printf("wait: %s", diff)
+	time.Sleep(diff)
 }
 
 func (r *rateLimiter) doRequest(c *call) {
 	resp, err := c.api.doRequest(c.reqURL, c.values, c.headers, c.typ)
+	if err != nil {
+		r.extraWait = true
+	}
 	c.done(resp, err)
+}
+
+func (r *rateLimiter) cleanExtraWait() {
+	r.extraWait = false
 }
